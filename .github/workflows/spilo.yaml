@@ -1,0 +1,88 @@
+name: spilo Packer Image CI Build
+
+on: 
+ workflow_dispatch: 
+   inputs:
+      docker_username:
+        description: 'dockerhub username'
+        required: true
+        default: 'avnshrai'
+      image_repo:
+        description: 'dockerhub repo ex:- avnshrai/spilo-15:latest'
+        required: true
+        default: 'avnshrai/spilo-15:latest'
+
+env:
+  PACKER_VERSION: "latest"
+  APP_NAME: "postgres-operator"
+  APP_VERSION: "3.0-p1"
+  DST_DIR: "spilo-15/3.0-p1"
+jobs:
+  packer:
+    runs-on: 
+      - devops-runner
+    name: Run Packer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install docker buildx
+        uses: docker/setup-buildx-action@v1
+        
+      - name: Setup `packer`
+        uses: hashicorp/setup-packer@main
+        id: setup
+        with:
+          version: ${{ env.PACKER_VERSION }}
+      
+      - name: Prepare image tag
+        run: echo "TAG=$(date +'%F-%H-%M')" >> $GITHUB_ENV  
+          
+      - name: Run `packer init`
+        id: init
+        run: |
+           cd $DST_DIR
+           packer init main.pkr.hcl
+      
+      - name: Run `packer validate`
+        id: validate
+        run: |
+           cd $DST_DIR
+           packer validate main.pkr.hcl
+      - name: Docker login
+        env:
+          DOCKER_USER: ${{ github.event.inputs.docker_username }}
+          DOCKER_PWD: ${{secrets.DOCKERHUB_PUSH_TOKEN}}
+        run: |
+          docker login -u $DOCKER_USER -p $DOCKER_PWD
+      
+      - name: Run `packer build`
+        id: build
+        env:
+         docker_username: ${{ github.event.inputs.docker_username }}
+         docker_password: ${{ secrets.DOCKERHUB_PUSH_TOKEN }}
+         GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+         GOPATH: "~/go"
+        run: |
+           cd $DST_DIR
+           export IMAGE=${{ github.event.inputs.docker_username }}/${{ env.APP_NAME }}:${{ env.TAG }}
+           packer build -var 'gopath=${{ env.GOPATH }}' -var 'git_token=${{ secrets.GIT_TOKEN }}' -var 'docker_username=${{ github.event.inputs.docker_username }}' -var 'docker_password=${{ secrets.DOCKERHUB_PUSH_TOKEN }}' -var 'tag=${{ env.TAG }}' -var 'branch=${{ env.APP_VERSION }}' main.pkr.hcl
+      
+      - name: ☢ Image Scan
+        uses: aquasecurity/trivy-action@master
+        id: scan
+        with:
+          image-ref: 'avnshrai/${{ env.APP_NAME }}:latest'
+          format: 'template'
+          template: "@/contrib/html.tpl"
+          output: 'trivy-image-results.html'
+          exit-code: '0'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+      
+      - name: ⬆ Upload Trivy Image scan results
+        uses: actions/upload-artifact@v3.1.2
+        with:
+          name: Trivy Scan HTML Report
+          path: trivy-image-results.html
