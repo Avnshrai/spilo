@@ -43,9 +43,9 @@ variable "branch" {
   default = ""
 }
 build {
-  name = "Percona-postgres-server-Image"
+  name = "spilo-Image"
   sources = [
-    "source.docker.percona-postgres-server"
+    "source.docker.spilo"
   ]
   provisioner "shell" {
     inline = [
